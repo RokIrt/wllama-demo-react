@@ -1,0 +1,87 @@
+:root {
+  /* Surfaces */
+  --bg: #0e1116;
+  --surface: #151a22;
+  --surface-2: #1c232e;
+  --border: #2a3342;
+  --border-soft: #222a37;
+
+  /* Ink (text wears text tokens, never accent colors) */
+  --ink: #e8ecf3;
+  --ink-2: #a3adbd;
+  --ink-muted: #6d7889;
+
+  /* Accent ramp (blue) — meter fill = accent, track = lighter/dimmer step of same ramp */
+  --accent: #5b9dff;
+  --accent-strong: #7db1ff;
+  --accent-track: rgba(91, 157, 255, 0.16);
+  --accent-bg: rgba(91, 157, 255, 0.12);
+
+  /* Status (reserved; always paired with a label, never color alone) */
+  --ok: #46b981;
+  --ok-bg: rgba(70, 185, 129, 0.12);
+  --warn: #e0a63c;
+  --danger: #e5646c;
+  --danger-bg: rgba(229, 100, 108, 0.1);
+
+  --sans:
+    system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+  --mono: ui-monospace, 'SF Mono', Consolas, 'Liberation Mono', monospace;
+
+  font: 15px/1.5 var(--sans);
+  color-scheme: dark;
+  color: var(--ink);
+  background: var(--bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+#root {
+  height: 100dvh;
+}
+
+h1,
+h2 {
+  margin: 0;
+  font-weight: 600;
+}
+
+button {
+  font: inherit;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+::selection {
+  background: rgba(91, 157, 255, 0.35);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
