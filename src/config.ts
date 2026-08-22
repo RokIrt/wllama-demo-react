@@ -121,6 +121,15 @@ export const MODELS: ModelDef[] = [
     shards: 11,
     note: 'Flagship MoE (4B active) — needs ~20 GB free RAM',
   },
+  {
+    name: 'Qwen3.5 35B A3B',
+    params: '35B-A3B',
+    quant: 'Q3_K_XL',
+    size: 16_601_177_888,
+    url: 'https://huggingface.co/888rok/Qwen3.5-35B-A3B-UD-Q3_K_XL-wllama-split/resolve/main/Qwen3.5-35B-A3B-UD-Q3_K_XL-00001-of-00010.gguf',
+    shards: 10,
+    note: 'Qwen flagship MoE (3B active) — needs ~20 GB free RAM',
+  },
 ]
 
 export interface InferenceSettings {
