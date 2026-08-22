@@ -6,8 +6,8 @@ import type { CacheManager } from '@wllama/wllama/esm/index.js'
 // automatic retry and when the user re-clicks the model later.
 
 const RESUME_DIR = 'wllama-resume'
-const MAX_RETRIES = 8
 const RETRY_DELAY_MS = 3000
+const MAX_RETRY_DELAY_MS = 30000
 // abort + retry when no bytes arrive for this long
 const STALL_TIMEOUT_MS = 30000
 
@@ -157,6 +157,26 @@ const sleep = (ms: number, signal?: AbortSignal) =>
     })
   })
 
+/** Resolve once the browser reports connectivity (no-op if already online). */
+const waitForOnline = (signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    if (navigator.onLine !== false) return resolve()
+    const onOnline = () => {
+      cleanup()
+      resolve()
+    }
+    const onAbort = () => {
+      cleanup()
+      reject(new DOMException('Aborted', 'AbortError'))
+    }
+    const cleanup = () => {
+      window.removeEventListener('online', onOnline)
+      signal?.removeEventListener('abort', onAbort)
+    }
+    window.addEventListener('online', onOnline)
+    signal?.addEventListener('abort', onAbort)
+  })
+
 export function supportsResumableDownload(): boolean {
   return typeof navigator.storage?.getDirectory === 'function'
 }
@@ -178,23 +198,25 @@ export async function downloadModelResumable(opts: {
 
   let base = 0
   for (const shardUrl of shardUrls) {
-    let lastError: unknown = null
-    let done = false
-    for (let attempt = 0; attempt <= MAX_RETRIES && !done; attempt++) {
-      if (attempt > 0) await sleep(RETRY_DELAY_MS, signal)
+    // retry indefinitely (the user can cancel) — network outages can easily
+    // outlast any fixed retry budget. Backoff resets whenever bytes flow.
+    let delay = RETRY_DELAY_MS
+    for (;;) {
       try {
         let shardBytes = 0
         await downloadShard(cm, shardUrl, signal, (bytes) => {
+          if (bytes > shardBytes) delay = RETRY_DELAY_MS
           shardBytes = bytes
           onProgress({ loaded: base + bytes, total: totalSize })
         })
         base += shardBytes
-        done = true
+        break
       } catch (e) {
         if (isAbort(e)) throw e
-        lastError = e
+        await sleep(delay, signal)
+        delay = Math.min(delay * 2, MAX_RETRY_DELAY_MS)
+        await waitForOnline(signal)
       }
     }
-    if (!done) throw lastError
   }
 }
