@@ -232,7 +232,11 @@ export function useWllama() {
     const history: WllamaChatMessage[] = [
       ...messagesRef.current
         .filter((m) => !m.error)
-        .map((m) => ({ role: m.role, content: m.content })),
+        .map((m) => ({
+          role: m.role,
+          // don't feed previous reasoning back into the model
+          content: m.content.replace(/<think>[\s\S]*?(<\/think>\s*|$)/, ''),
+        })),
       { role: 'user', content: text },
     ]
     const userMsg: ChatMsg = { id: ++idRef.current, role: 'user', content: text }
@@ -248,8 +252,15 @@ export function useWllama() {
     abortRef.current = ctrl
     const t0 = performance.now()
     let ttft: number | null = null
+    let answer = ''
+    let reasoning = ''
     let content = ''
     let timings: ResultTimings | undefined
+
+    // llama.cpp parses <think> blocks into a separate reasoning_content field;
+    // recompose so the UI's <think> handling still works.
+    const compose = () =>
+      reasoning ? `<think>${reasoning}${answer ? '</think>' : ''}${answer}` : answer
 
     const updateAssistant = (patch: Partial<ChatMsg>) =>
       setMessages((prev) =>
@@ -268,9 +279,15 @@ export function useWllama() {
         timings_per_token: true,
       })
       for await (const chunk of stream) {
-        const delta = chunk.choices[0]?.delta?.content ?? ''
-        if (delta && ttft === null) ttft = performance.now() - t0
-        content += delta
+        const delta = chunk.choices[0]?.delta as
+          | { content?: string | null; reasoning_content?: string | null }
+          | undefined
+        const text = delta?.content ?? ''
+        const think = delta?.reasoning_content ?? ''
+        if ((text || think) && ttft === null) ttft = performance.now() - t0
+        answer += text
+        reasoning += think
+        content = compose()
         if (chunk.timings) timings = chunk.timings
         const stats = statsFromTimings(timings, ttft, performance.now() - t0)
         setGenStats(stats)
