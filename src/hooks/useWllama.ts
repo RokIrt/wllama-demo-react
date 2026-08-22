@@ -13,6 +13,10 @@ import {
   type InferenceSettings,
   type ModelDef,
 } from '../config'
+import {
+  downloadModelResumable,
+  supportsResumableDownload,
+} from '../lib/resumableDownload'
 
 export type AppStatus = 'idle' | 'loading' | 'ready' | 'generating'
 
@@ -178,11 +182,33 @@ export function useWllama() {
         })
         wllamaRef.current = wllama
         const s = settingsRef.current
-        await wllama.loadModelFromUrl(model.url, {
+        const ctrl = new AbortController()
+        abortRef.current = ctrl
+        const loadParams = {
           n_ctx: s.nCtx,
           ...(s.useWebGPU ? {} : { n_gpu_layers: 0 }),
-          progressCallback: ({ loaded, total }) => setProgress({ loaded, total }),
-        })
+        }
+        if (supportsResumableDownload()) {
+          // download with HTTP Range resume + auto-retry, then load from cache
+          await downloadModelResumable({
+            manager: getManager(),
+            url: model.url,
+            totalSize: model.size,
+            signal: ctrl.signal,
+            onProgress: setProgress,
+          })
+          const cached = await getManager().getModelOrDownload(
+            { url: model.url },
+            { signal: ctrl.signal },
+          )
+          await wllama.loadModel(cached, loadParams)
+        } else {
+          await wllama.loadModelFromUrl(model.url, {
+            ...loadParams,
+            progressCallback: ({ loaded, total }) =>
+              setProgress({ loaded, total }),
+          })
+        }
         const ctx = wllama.getLoadedContextInfo()
         setRuntime({
           modelName: ctx.metadata['general.name'] ?? model.name,
@@ -194,7 +220,9 @@ export function useWllama() {
         setStatus('ready')
         void refreshCached()
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
+        if (!isAbortError(e)) {
+          setError(e instanceof Error ? e.message : String(e))
+        }
         setStatus('idle')
         setActiveModel(null)
         if (wllamaRef.current) {

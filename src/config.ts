@@ -113,6 +113,15 @@ export const MODELS: ModelDef[] = [
     note: 'Large dense model — needs ~12 GB free RAM',
   },
   {
+    name: 'Gemma 4 31B IT',
+    params: '31B',
+    quant: 'Q3_K_XL',
+    size: 15_380_223_936,
+    url: 'https://huggingface.co/888rok/gemma-4-31B-it-UD-Q3_K_XL-wllama-split/resolve/main/gemma-4-31B-it-UD-Q3_K_XL-00001-of-00009.gguf',
+    shards: 9,
+    note: 'Largest dense Gemma — needs ~18 GB free RAM',
+  },
+  {
     name: 'Gemma 4 26B A4B IT',
     params: '26B-A4B',
     quant: 'Q4_K_M',
