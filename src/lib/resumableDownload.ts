@@ -8,6 +8,8 @@ import type { CacheManager } from '@wllama/wllama/esm/index.js'
 const RESUME_DIR = 'wllama-resume'
 const MAX_RETRIES = 8
 const RETRY_DELAY_MS = 3000
+// abort + retry when no bytes arrive for this long
+const STALL_TIMEOUT_MS = 30000
 
 interface PartMeta {
   etag: string
@@ -60,52 +62,86 @@ async function downloadShard(
   const partName = name + '.part'
   const prev = await readPartState(dir, partName)
 
+  // Only CORS-safelisted headers here: If-Range would trigger a preflight
+  // that the HF CDN rejects, killing every resume with "Failed to fetch".
+  // Instead we validate the ETag after the response arrives.
   const headers: Record<string, string> = {}
-  if (prev) {
-    headers['Range'] = `bytes=${prev.offset}-`
-    // server sends 206 only if the file is unchanged, otherwise full 200
-    headers['If-Range'] = prev.etag
+  if (prev) headers['Range'] = `bytes=${prev.offset}-`
+
+  // watchdog: abort the fetch if the stream stalls, so retry can kick in
+  const ctrl = new AbortController()
+  let stalled = false
+  const onOuterAbort = () => ctrl.abort()
+  signal?.addEventListener('abort', onOuterAbort)
+  let watchdog = setTimeout(() => {
+    stalled = true
+    ctrl.abort()
+  }, STALL_TIMEOUT_MS)
+  const kick = () => {
+    clearTimeout(watchdog)
+    watchdog = setTimeout(() => {
+      stalled = true
+      ctrl.abort()
+    }, STALL_TIMEOUT_MS)
   }
-  const res = await fetch(url, { headers, signal })
-  if (!res.ok || !res.body) throw new Error(`HTTP ${res.status} for ${url}`)
 
-  const resuming = res.status === 206 && prev !== null
-  const start = resuming ? prev.offset : 0
-  const etag = res.headers.get('etag') ?? ''
-
-  const fh = await dir.getFileHandle(partName, { create: true })
-  const mf = await dir.getFileHandle(partName + '.meta', { create: true })
-  const mw = await mf.createWritable()
-  await mw.write(JSON.stringify({ etag } satisfies PartMeta))
-  await mw.close()
-
-  const writable = await fh.createWritable({ keepExistingData: resuming })
-  let written = start
-  onShardLoaded(written)
   try {
-    if (resuming) await writable.seek(start)
-    else await writable.truncate(0)
-    const reader = res.body.getReader()
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      await writable.write(value)
-      written += value.byteLength
-      onShardLoaded(written)
-    }
-  } finally {
-    // close() commits the data written so far, keeping it for the next resume
-    await writable.close().catch(() => {})
-  }
+    const res = await fetch(url, { headers, signal: ctrl.signal })
+    if (!(res.ok || res.status === 206) || !res.body)
+      throw new Error(`HTTP ${res.status} for ${url}`)
 
-  // move the finished shard into the wllama cache (streamed, not buffered)
-  const blob = await fh.getFile()
-  await cm.write(name, blob.stream(), {
-    etag,
-    originalSize: blob.size,
-    originalURL: url,
-  })
-  await removePart(dir, partName)
+    const etag = res.headers.get('etag') ?? ''
+    const resuming = res.status === 206 && prev !== null
+    if (resuming && prev && etag && prev.etag && etag !== prev.etag) {
+      // remote file changed since the partial was saved — start over
+      ctrl.abort()
+      await removePart(dir, partName)
+      throw new Error('remote file changed, restarting download')
+    }
+    const start = resuming ? prev!.offset : 0
+
+    const fh = await dir.getFileHandle(partName, { create: true })
+    const mf = await dir.getFileHandle(partName + '.meta', { create: true })
+    const mw = await mf.createWritable()
+    await mw.write(JSON.stringify({ etag } satisfies PartMeta))
+    await mw.close()
+
+    const writable = await fh.createWritable({ keepExistingData: resuming })
+    let written = start
+    onShardLoaded(written)
+    try {
+      if (resuming) await writable.seek(start)
+      else await writable.truncate(0)
+      const reader = res.body.getReader()
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        kick()
+        await writable.write(value)
+        written += value.byteLength
+        onShardLoaded(written)
+      }
+    } finally {
+      // close() commits the data written so far, keeping it for the next resume
+      await writable.close().catch(() => {})
+    }
+
+    // move the finished shard into the wllama cache (streamed, not buffered)
+    const blob = await fh.getFile()
+    await cm.write(name, blob.stream(), {
+      etag,
+      originalSize: blob.size,
+      originalURL: url,
+    })
+    await removePart(dir, partName)
+  } catch (e) {
+    // a stall-triggered abort must be retryable, not treated as user abort
+    if (stalled && isAbort(e)) throw new Error('download stalled, retrying')
+    throw e
+  } finally {
+    clearTimeout(watchdog)
+    signal?.removeEventListener('abort', onOuterAbort)
+  }
 }
 
 function isAbort(e: unknown): boolean {
